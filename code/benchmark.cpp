@@ -1,115 +1,140 @@
-//
-// (C) 2021, E. Wes Bethel
-// benchmark-* harness for running different versions of vector-matrix multiply
-//    over different problem sizes
-//
-// usage: no command line arguments
-// set problem sizes in the code below
-
+// (C) 2021, E. Wes Bethel. Reference implementation additions, 2026.
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstddef>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <random>
+#include <stdexcept>
+#include <string>
 #include <vector>
-
-#include <cmath> // For: fabs
-
 #include <cblas.h>
-#include <string.h>
 
-// external definitions for mmul's
-extern void my_dgemv(int, double*, double*, double *);
+extern void my_dgemv(int, double*, double*, double*);
 extern const char* dgemv_desc;
 
-void reference_dgemv(int n, double* A, double* x, double *y) {
-   double alpha=1.0, beta=1.0;
-   int lda=n, incx=1, incy=1;
-    // cblas_dgemm(CblasColMajor, CblasNoTrans, CblasNoTrans, n, n, n, alpha, A, n, B, n, 1., C, n);
-    cblas_dgemv(CblasRowMajor, CblasNoTrans, n, n, alpha, A, lda, x, incx, beta, y, incy);
+void reference_dgemv(int n, double* A, double* x, double* y) {
+    cblas_dgemv(CblasRowMajor, CblasNoTrans, n, n,
+                1.0, A, n, x, 1, 1.0, y, 1);
 }
 
-void fill(double* p, int n) {
-    static std::random_device rd;
-    static std::default_random_engine gen(rd());
-    static std::uniform_real_distribution<> dis(-1.0, 1.0);
-    for (int i = 0; i < n; ++i)
-        p[i] = 2 * dis(gen) - 1;
-}
-
-bool check_accuracy(double *A, double *Anot, int nvalues)
-{
-  double eps = 1e-5;
-  for (size_t i = 0; i < nvalues; i++) 
-  {
-    if (fabsf(A[i] - Anot[i]) > eps) {
-       return false;
+void fill(double* data, std::size_t count, std::mt19937& generator) {
+    std::uniform_real_distribution<double> distribution(-1.0, 1.0);
+    for (std::size_t i = 0; i < count; ++i) {
+        data[i] = distribution(generator);
     }
-  }
-  return true;
 }
 
-
-/* The benchmarking program */
-int main(int argc, char** argv) 
-{
-    std::cout << "Description:\t" << dgemv_desc << std::endl << std::endl;
-
-    std::cout << std::fixed << std::setprecision(5);
-
-    // we purposefully run the smallest problem twice so as to "condition"
-    // BLAS. For timing purposes, ignore the timing of the first problem size
-    std::vector<int> test_sizes{1024, 1024, 2048, 4096, 8192, 16384};
-
-    int n_problems = test_sizes.size();
-
-    // preallocate memory buffers for all problems: assume the last number in test_sizes is the largest
-
-    // allocate memory for 2 NxN matrices and 4 Nx1 vectors
-
-    int max_size = test_sizes[n_problems-1];
-
-    std::vector<double> buf(2 * max_size * max_size + 4 * max_size);
-    double* A = buf.data() + 0;
-    double* Acopy = A + max_size * max_size;
-    double* X = Acopy + max_size * max_size;
-    double* Xcopy = X + max_size;
-    double* Y = Xcopy + max_size;
-    double* Ycopy = Y + max_size;
-
-           // load up matrics with some random numbers
-    /* For each test size */
-    for (int n : test_sizes) 
-    {
-        printf("Working on problem size N=%d \n", n);
-
-        fill(A, n * n);
-        fill(X, n );
-        fill(Y, n );
-
-        // make copies of A, B, C for use in verification of results
-        memcpy((void *)Acopy, (const void *)A, sizeof(double)*n*n);
-        memcpy((void *)Xcopy, (const void *)X, sizeof(double)*n);
-        memcpy((void *)Ycopy, (const void *)Y, sizeof(double)*n);
-
-        // insert start timer code here
-
-        // call the method to do the work
-        my_dgemv(n, A, X, Y); 
-
-        // insert end timer code here, and print out the elapsed time for this problem size
-
-
-        // now invoke the cblas method to compute the matrix-vector multiplye
-        reference_dgemv(n, Acopy, Xcopy, Ycopy);
-
-        // compare your result with that computed by BLAS
-        if (check_accuracy(Ycopy, Y, n) == false)
-           printf(" Error: your answer is not the same as that computed by BLAS. \n");
-    
-    } // end loop over problem sizes
-
-    return 0;
+bool check_accuracy(const double* expected, const double* actual, int n) {
+    for (int i = 0; i < n; ++i) {
+        // Optimized reductions may reorder additions, so allow rounding error.
+        const double tolerance = 1e-10 + 1e-10 * std::abs(expected[i]);
+        if (!std::isfinite(expected[i]) || !std::isfinite(actual[i]) ||
+            std::abs(expected[i] - actual[i]) > tolerance) {
+            std::cerr << "Verification failed at row " << i
+                      << ": expected " << std::setprecision(17) << expected[i]
+                      << ", got " << actual[i] << '\n';
+            return false;
+        }
+    }
+    return true;
 }
 
-// EOF
+std::vector<int> parse_sizes(int argc, char** argv) {
+    if (argc == 1) {
+        return {1024, 2048, 4096, 8192, 16384};
+    }
+    if (argc != 3 || std::string(argv[1]) != "--sizes") {
+        throw std::invalid_argument("Usage: benchmark-* [--sizes N1,N2,...]");
+    }
+    const std::string input(argv[2]);
+    std::vector<int> sizes;
+    std::size_t start = 0;
+    while (start < input.size()) {
+        const std::size_t end = input.find(',', start);
+        const std::string token = input.substr(start, end - start);
+        if (token.empty() || token.find_first_not_of("0123456789") != std::string::npos) {
+            throw std::invalid_argument("Sizes must be comma-separated positive integers");
+        }
+        const unsigned long long value = std::stoull(token);
+        if (value == 0 || value > static_cast<unsigned long long>(std::numeric_limits<int>::max())) {
+            throw std::invalid_argument("Problem size is outside the supported integer range");
+        }
+        sizes.push_back(static_cast<int>(value));
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1;
+        if (start == input.size()) {
+            throw std::invalid_argument("Size list must not end with a comma");
+        }
+    }
+    if (sizes.empty()) {
+        throw std::invalid_argument("At least one problem size is required");
+    }
+    return sizes;
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "--help") {
+        std::cout << "Usage: benchmark-* [--sizes N1,N2,...]\n"
+                     "Defaults: 1024,2048,4096,8192,16384; first size has a warmup run.\n";
+        return 0;
+    }
+    try {
+        std::vector<int> sizes = parse_sizes(argc, argv);
+        // Keep the starter's extra first run to warm up BLAS; mark it explicitly.
+        sizes.insert(sizes.begin(), sizes.front());
+        const std::size_t max_size = *std::max_element(sizes.begin(), sizes.end());
+        const std::size_t max_elements = std::vector<double>().max_size();
+        if (max_size > max_elements / 4 ||
+            max_size > (max_elements - 4 * max_size) / max_size / 2) {
+            throw std::length_error("Problem size exceeds the supported allocation range");
+        }
+        const std::size_t matrix_elements = max_size * max_size;
+        std::vector<double> buffer(2 * matrix_elements + 4 * max_size);
+        double* A = buffer.data();
+        double* Acopy = A + matrix_elements;
+        double* x = Acopy + matrix_elements;
+        double* xcopy = x + max_size;
+        double* y = xcopy + max_size;
+        double* ycopy = y + max_size;
+        std::mt19937 generator(746);
+        bool all_verified = true;
+        std::cout << "# " << dgemv_desc << '\n'
+                  << "n,seconds,flops,mflops,verified,warmup\n";
+        for (std::size_t run = 0; run < sizes.size(); ++run) {
+            const int n = sizes[run];
+            const std::size_t elements = static_cast<std::size_t>(n) * n;
+            fill(A, elements, generator);
+            fill(x, n, generator);
+            fill(y, n, generator);
+            std::copy_n(A, elements, Acopy);
+            std::copy_n(x, n, xcopy);
+            std::copy_n(y, n, ycopy);
+
+            const auto start = std::chrono::steady_clock::now();
+            my_dgemv(n, A, x, y);
+            const auto end = std::chrono::steady_clock::now();
+            const double seconds = std::chrono::duration<double>(end - start).count();
+
+            reference_dgemv(n, Acopy, xcopy, ycopy);
+            const bool verified = check_accuracy(ycopy, y, n);
+            all_verified = all_verified && verified;
+            // n multiplications and n additions per row, including adding to y.
+            const std::size_t flops = 2 * elements;
+            const double mflops = seconds > 0.0 ? flops / seconds / 1e6
+                : std::numeric_limits<double>::quiet_NaN();
+            std::cout << n << ',' << std::scientific << std::setprecision(9)
+                      << seconds << ',' << flops << ',' << mflops << ','
+                      << (verified ? "PASS" : "FAIL") << ','
+                      << (run == 0 ? 1 : 0) << '\n';
+        }
+        return all_verified ? 0 : 1;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 2;
+    }
+}

@@ -1,122 +1,108 @@
-# vmmul omp instructional test harness
+# VMM reference implementation
 
-This directory contains a benchmark harness for testing different implementations of
-vector-matrix multiply (VMM) for varying problem sizes.
+This branch contains a reference implementation for comparing your own work.
+The original downloaded stubs remain on `main`. To compare a file against its
+starter version, use `git diff main -- code/dgemv-basic.cpp`.
 
-The main code is benchmark.cpp, which sets up the problem, iterates over problem
-sizes, sets up the vector and matrix, executes the vmmul call, and tests the
-result for accuracy by comparing your result against a reference implementation (CBLAS).
+## Kernel behavior
 
-Note that cmake needs to be able to find the CBLAS package. For CSC 746/656 Fall 2023,
-this condition is true on Perlmutter@NERSC and on the class VM. It is also true for some
-other platforms, but you are on your own if using a platform other than Perlmutter@NERSC
-or the class VM.
+All kernels compute `y += A*x` for a double-precision, row-major, square matrix.
+`A` and `x` remain unchanged. Buffers must not overlap; `n` must be nonnegative.
 
-<br></br>
+- `dgemv-basic.cpp`: one scalar dot product per row, accumulated into the existing `y`.
+- `dgemv-vectorized.cpp`: the exact same function body. Compiler flags enable automatic
+  vectorization; there are no vector intrinsics or pragmas in this version.
+- `dgemv-openmp.cpp`: distributes rows using `parallel for schedule(static)`. Each row
+  has a private sum and writes a distinct output element, so no atomic or reduction
+  directive is needed. Threads are selected with `OMP_NUM_THREADS`.
+- `dgemv-blas.cpp`: the upstream CBLAS wrapper, with `alpha=1` and `beta=1`.
 
-# Build instructions for Perlmutter and the VM
+The basic and OpenMP kernels use `-O1` with automatic vectorization disabled on
+GNU/Clang, preserving the scalar baseline. The vectorized kernel uses `-O3` and
+`-ffast-math`, allowing reordered floating-point reductions. Small rounding
+differences relative to CBLAS are expected. Do not expect bitwise equality.
 
-Perlmutter only: After logging in to Perlmutter, first set up your environment by typing this command:
+## Build
 
-    module load cpu  
+Requires CMake 3.14+, a C++11 compiler supporting OpenMP, and BLAS with CBLAS headers.
+On Perlmutter, load the CPU/compiler and math-library environment used in class,
+then run from the project root:
 
-On the VM: no special environment setup is needed
+```sh
+module load cpu
+cmake -S code -B build
+cmake --build build -j 4
+ctest --test-dir build --output-on-failure
+```
 
+If CBLAS headers are not found automatically, add
+`-DCBLAS_INCLUDE_DIR=/path/to/headers` when configuring. The build uses CMake's
+OpenMP dependency rather than hard-coded OpenMP link flags.
 
-Then, build the code. First, cd into the main source directory (vmmul-omp-harness-instructional) and then enter the following commands:
+On this Mac, the following configuration was built and tested using the already
+installed Homebrew GCC 16 and OpenBLAS:
 
-    mkdir build  
-    cd build  
-    cmake ../  
-    make  
+```sh
+cmake -S code -B build \
+  -DCMAKE_C_COMPILER=/opt/homebrew/bin/gcc-16 \
+  -DCMAKE_CXX_COMPILER=/opt/homebrew/bin/g++-16 \
+  -DBLA_VENDOR=OpenBLAS \
+  -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/openblas
+cmake --build build -j 4
+ctest --test-dir build --output-on-failure
+```
 
-<br></br>
+Use a fresh build directory when changing compilers. With GCC, inspect
+`build/report.txt` for the vectorization report. Clang emits vectorization remarks
+during compilation instead. Do not globally enable `-ffast-math`: the benchmark
+and tests must retain their finite-value checks. The vectorized kernel alone uses it.
 
-# Running the codes on Perlmutter
+## Run and compare
 
-After building the codes, it is ok to do very brief runs on login nodes for debug purposes.
-Here, "brief" means < 10 second runs.
+For a quick correctness run with small inputs:
 
-When you are ready to do builds/runs on a Perlmutter CPU node, use the salloc command to hop onto a CPU node:
+```sh
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OMP_DYNAMIC=FALSE
+./build/benchmark-basic --sizes 3,17,65,1024
+./build/benchmark-vectorized --sizes 3,17,65,1024
+OMP_NUM_THREADS=4 ./build/benchmark-openmp --sizes 3,17,65,1024
+./build/benchmark-blas --sizes 3,17,65,1024
+```
 
-    salloc --nodes=1 --qos=interactive --time=00:15:00 --constraint=cpu --account=m3930
+No size argument runs the assignment's `1024,2048,4096,8192,16384` sequence. The
+largest run allocates about 4 GiB for two matrices and four vectors. Run that
+sequence on the intended compute node. The generated `build/job-openmp` runs all
+sizes with 1, 4, 16, and 64 threads, requests 64 CPUs, and stops on a failed run.
+Review its account/time settings for your allocation; run it from `build`.
 
-There is a sample job script provided in the code harness for running the OpenMP code at 4 levels of concurrency: 1, 4, 16, 64 threads. You may launch that script either as a batch job using the sbatch command, or you may run it as a shell script from an interactive node (preferred).
+The harness uses seeded input data and times only `my_dgemv`, including OpenMP team
+launch/join. Initialization, copying, and CBLAS verification occur outside the timer.
+The first size is run twice; discard the row with `warmup=1` when analyzing timing.
+CSV columns are:
 
-From the build directory, run as a shell script on an interactive CPU node:
+```text
+n,seconds,flops,mflops,verified,warmup
+```
 
-    bash ./job-openmp
+The first output line is a description comment beginning with `#`. FLOPs are
+`2*n*n`: `n` multiplications and `n` additions per row, including accumulation into
+`y`. `mflops = flops / seconds / 1e6`. Tiny inputs can finish below clock resolution;
+those rows have zero seconds and `nan` MFLOP/s, and are useful for correctness only.
 
-For the other codes -- benchmark-blas, benchmark-basic, and benchmark-vectorized -- it is easiest to run these from the command line from an interactive node from your build directoy by typing:
+Exit status is 0 when all results match CBLAS, 1 on a numerical mismatch, and 2
+on invalid arguments or setup errors. The checker rejects nonfinite outputs and
+allows an absolute tolerance of `1e-10` plus a relative tolerance of `1e-10`.
 
-    ./benchmark-basic  
+## Correctness coverage
 
-or  
+The CTest suite compares each student kernel to CBLAS, plus a hand-computed
+asymmetric 2-by-2 example. It covers zero/one/odd sizes, mixed signs and scales,
+zero and identity matrices, nonzero initial outputs, repeated accumulation, and
+preservation of `A` and `x`. OpenMP is checked with 1, 4, 16, and 64 threads,
+including cases with more threads than rows. The CBLAS comparisons allow rounding
+error; the small integer hand-computed case is checked exactly.
 
-    ./benchmark-vectorized   
-
-or  
-
-    ./benchmark-blas  
-
-# Build peculiarities for MacOSX platforms:
-
-1. Compiler version. The default version of g++ shipped with the the development library on MacOS 12.6.8 (Monterey) is clang version 12.0.5 (clang-1205.0.22.9) and this version of the compiler WILL NOT WORK with this assignment because it does not support OpenMP. The simplest fix is to install a new compiler: brew install gcc, which will install the most current version of gcc/g++, which is 12.2.0 (for MacOSC 12.6.8, Monterey) as of the time of this writing.
-
-There may be a way to force Apple's clang to enable OpenMP. See this thread, which Prof. Bethel has not tried: https://stackoverflow.com/questions/44380459/is-openmp-available-in-high-sierra-llvm/47230419#47230419
-
-2. Setting the CXXFLAGS to point to the directory containing cblas.h.
-On Prof. Bethel's laptop, which is an intel-based Macbook Pro running MacOS 12.6.8 (Monterey), with
-Xcode installed, cmake (version 3.20.1) can find the BLAS package, but then the build fails with
-an error about g++ not being able to find cblas.h.
-
-The workaround is to tell cmake where cblas.h lives by using an environment variable:
-
-    export CXXFLAGS="-I /path/to/headers"  
-
-then clean your build directory (rm -rf * inside build) and run cmake again.  Note: you  need to replace /path/to/headers with
-the full path to the directory containing the cblas.h header on your machine.
-
-Note you will need to "locate cblas.h" on your machine and replace the path to cblas.h
-in the CXXFLAGS line above with the path on your specific machine.
-
-Run the command:  
-
-    locate cblas.h  
-
-which on Prof. Bethel's laptop produces the following output:
-
-    /Library/Developer/CommandLineTools/SDKs/MacOSX10.15.sdk/System/Library/Frameworks/Accelerate.framework/Versions/A/Frameworks/vecLib.framework/Versions/A/Headers/cblas.h  
-    /Library/Developer/CommandLineTools/SDKs/MacOSX11.3.sdk/System/Library/Frameworks/Accelerate.framework/Versions/A/Frameworks/vecLib.framework/Versions/A/Headers/cblas.h  
-    /usr/local/Cellar/openblas/0.3.23/include/cblas.h 
-
-
-
-Use the path to the newest headers, here the MacOSX11.3.sdk version:
-    
-    export CXXFLAGS = "-I /Library/Developer/CommandLineTools/SDKs/MacOSX11.3.sdk/System/Library/Frameworks/Accelerate.framework/Versions/A/Frameworks/vecLib.framework/Versions/A/Headers/"   
-
-Then clean your build directory, and rerun cmake then make.
-
-<br></br>
-
-# Adding your code
-
-For timing:
-
-You will need to modify the benchmark.cpp code to add timing instrumentation, to 
-report FLOPs executed, and so forth.
-
-
-For vector-matrix multiplication:
-
-There are stub routines inside dgemv-basic.cpp, dgemv-vectorized.cpp, and dgemv-openmp.cpp where you can add your code for doing basic, vectorized, and OpenMP-parallel vector-matrix multiply, respectively.
-
-For the OpenMP parallel code, note that you specify concurrency at runtime using
-the OMP_NUM_THREADS environment variable. While it is possible to set the number of
-concurrent OpenMP threads at compile time, it is generally considered better practice to
-specify the number of OpenMP threads via the OMP_NUM_THREADS environment variable.
-
-<br></br>
-
-#eof
+Local validation used GCC/OpenBLAS on macOS. Perlmutter execution and the full
+assignment-size performance study still need to be done on the target machine.

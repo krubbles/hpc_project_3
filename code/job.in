@@ -1,6 +1,7 @@
 #!/bin/bash -l
 #SBATCH --constraint=cpu
-#SBATCH --cpus-per-task=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=64
 #SBATCH --qos=interactive
 #SBATCH --nodes=1
 #SBATCH --time=00:04:00
@@ -16,6 +17,10 @@
 
 export OMP_PLACES=threads
 export OMP_PROC_BIND=spread
+export OMP_DYNAMIC=FALSE
+# Keep the CBLAS reference serial, independently of the OpenMP kernel team size.
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
 
 # iterate over some number of threads. 
 
@@ -31,8 +36,8 @@ export OMP_PROC_BIND=spread
 for t in 1 4 16 64
    do
    export OMP_NUM_THREADS=$t
-   echo "OMP_NUM_THREASDS = " $OMP_NUM_THREADS
-   ./benchmark-@BENCHMARK@
+   echo "# OMP_NUM_THREADS=$OMP_NUM_THREADS"
+   ./benchmark-@BENCHMARK@ || exit $?
 #   srun -n 1  ./benchmark-@BENCHMARK@  # fall 2023, don't use srun to launch non-MPI jobs
 # don't use --cpu-bind=threads on KNL when P % 272 != 0
 # see https://docs.nersc.gov/jobs/affinity/#slurm-cpu-bind-flag
