@@ -3,6 +3,8 @@
 
 # Local build and Python environments
 build/
+deliverables/
+deliverables_*/
 .venv/
 __pycache__/
 *.py[cod]

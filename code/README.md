@@ -4,6 +4,72 @@ This branch contains a reference implementation for comparing your own work.
 The original downloaded stubs remain on `main`. To compare a file against its
 starter version, use `git diff main -- code/dgemv-basic.cpp`.
 
+## One-command Perlmutter workflow
+
+From this project's root on a **Perlmutter login node**, outside an existing
+allocation, run:
+
+```sh
+python3 code/run_benchmarks.py
+```
+
+This adapts Project 2's Python benchmark/plotting workflow. It submits one exclusive
+CPU-node Slurm job and waits. The job loads `cpu`, `PrgEnv-gnu`, and `python`, builds
+a snapshot of the sources, checks correctness, runs the assignment problem sizes
+for basic, vectorized, serial CBLAS, and static OpenMP at 1/4/16/64 threads, and
+generates `deliverables/`. The default account is the class account `m3930`, QoS
+is `regular`, time limit is 30 minutes, and each configuration is repeated three
+times. Change those when needed, for example:
+
+```sh
+python3 code/run_benchmarks.py --account m3930 --time 00:45:00 --repetitions 5
+```
+
+There is no optimization sweep: the current `-O1` basic/OpenMP and `-O3` vectorized
+flags are preserved. The script checks the effective compilation flags and saves
+them. CBLAS timing runs use one library thread. The requested full node has 256
+logical CPUs (128 physical cores); benchmarks run sequentially to avoid interference.
+
+Watch the printed job ID with `squeue -j JOB_ID` or follow
+`deliverables/raw/slurm.log`. The Python command returns successfully only when
+`deliverables/status.json` says `complete`. A failed build, bad numerical result,
+missing measurement, or failed job leaves a failed status and diagnostic logs.
+Stopping the waiting command can leave the job running; cancel with `scancel JOB_ID`.
+
+The folder contains the source ZIP and a source tree, raw/summary CSVs, all three
+required charts as PNG/PDF, bandwidth and performance tables as CSV/Markdown/LaTeX,
+compiler/vectorization evidence, system metadata, and reproducibility hashes.
+Copy it back from this Mac, substituting your username and remote project path:
+
+```sh
+scp -r USER@perlmutter.nersc.gov:/path/to/hpc_project_3/deliverables ./
+```
+
+The report and interpretation remain manual. The bandwidth table is explicitly a
+useful-traffic estimate, not hardware-counter data: `8*(N*N+3*N) / seconds`, divided
+by the whole-node theoretical peak of 409.6 GB/s. The default preserves the
+starter's serial first-touch memory placement; `--interleave-memory` selects and
+records an alternative using `numactl`. Chart 2 uses the basic serial baseline
+shown in Lecture 10's CP3 example; an OpenMP-one-thread speedup table is also
+generated. Chart 3 selects one fixed concurrency using geometric mean runtime.
+Full formulas and sources are recorded in the generated folder's README.
+
+The script never overwrites an existing output folder. For another run, use
+`--output deliverables_run2`. The generated source archive excludes binaries,
+build caches, references, and the report. Matplotlib is the only Python dependency
+(`requirements.txt`); the job loads NERSC's Python module and checks it before work.
+
+To validate locally without submitting jobs (output is marked as local validation):
+
+```sh
+python3 code/run_benchmarks.py --local --sizes 256,1024 --repetitions 2 \
+  --output build/local-deliverables \
+  --cmake-arg=-DCMAKE_C_COMPILER=/opt/homebrew/bin/gcc-16 \
+  --cmake-arg=-DCMAKE_CXX_COMPILER=/opt/homebrew/bin/g++-16 \
+  --cmake-arg=-DBLA_VENDOR=OpenBLAS \
+  --cmake-arg=-DCMAKE_PREFIX_PATH=/opt/homebrew/opt/openblas
+```
+
 ## Kernel behavior
 
 All kernels compute `y += A*x` for a double-precision, row-major, square matrix.

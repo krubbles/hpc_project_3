@@ -15,6 +15,12 @@ Read the [reference index](reference_materials/README.md) and assignment descrip
 before starting implementation or the report. The lecture Markdown contains all
 232 pages; inspect the PDFs when you need diagrams or exact code and equations.
 
+On a Perlmutter login node, run `python3 code/run_benchmarks.py`. It submits and
+waits for a CPU-node job that builds, verifies, benchmarks, and generates a portable
+`deliverables/` folder with source ZIP, charts, tables, data, and environment details.
+See [code/README.md](code/README.md) for defaults, options, and copy-back instructions.
+The report and interpretation remain manual work.
+
 ## Upstream sources
 
 | Component | Repository | Downloaded commit |

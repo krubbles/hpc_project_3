@@ -65,6 +65,11 @@ configure_file(job.in job-${BENCHMARK} @ONLY)
 
 include(CTest)
 if(BUILD_TESTING)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME pipeline-validation
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_pipeline.py)
+    endif()
     foreach(kind basic vectorized openmp)
         add_executable(check-${kind} tests/check_dgemv.cpp)
         target_link_libraries(check-${kind} PRIVATE kernel-${kind})
