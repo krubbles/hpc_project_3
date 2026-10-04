@@ -1,0 +1,23 @@
+# macOS metadata
+.DS_Store
+
+# Local build and Python environments
+build/
+.venv/
+__pycache__/
+*.py[cod]
+code/CMakeCache.txt
+code/CMakeFiles/
+code/cmake_install.cmake
+code/compile_commands.json
+
+# LaTeX intermediate files (keep supplied PDFs and generated figures)
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
