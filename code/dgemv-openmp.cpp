@@ -12,19 +12,18 @@ const char* dgemv_desc = "OpenMP dgemv.";
  * On exit, A and X maintain their input values.
  */
 
-void my_dgemv(int n, double* A, double* x, double* y) {
-
-   #pragma omp parallel
-   {
-      int nthreads = omp_get_num_threads();
-      int thread_id = omp_get_thread_num();
-      printf("my_dgemv(): Hello world: thread %d of %d checking in. \n", thread_id, nthreads);
-      printf("my_dgemv(): For actual timing runs, please comment out these printf() and omp_get_*() statements. \n");
-   }
-
-   // insert your dgemv code here. you may need to create additional parallel regions,
-   // and you will want to comment out the above parallel code block that prints out
-   // nthreads and thread_id so as to not taint your timings
-
+void my_dgemv(int n, double* A, double* x, double* y)
+{
+    // 1 thread per row
+    #pragma omp parallel for
+    for (int i = 0; i < n; ++i)
+    {
+        const double* row = A + i * n;
+        double sum = 0.0;
+        for (int j = 0; j < n; ++j)
+        {
+            sum += row[j] * x[j];
+        }
+        y[i] += sum;
+    }
 }
-

@@ -9,6 +9,10 @@ set(CMAKE_BUILD_TYPE "Release")
 set(CMAKE_CXX_FLAGS_RELEASE "-O0")
 
 find_package(BLAS REQUIRED)
+find_path(CBLAS_INCLUDE_DIR cblas.h PATH_SUFFIXES openblas)
+if(CBLAS_INCLUDE_DIR)
+    include_directories("${CBLAS_INCLUDE_DIR}")
+endif()
 
 if ("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
    message(STATUS "setting vector flags for gcc compiler = " ${CMAKE_C_COMPILER_ID})
