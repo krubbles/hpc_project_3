@@ -2,6 +2,7 @@
 set -e
 module load cpu PrgEnv-gnu
 cd "$2"
+{ lscpu; free -h; cat /etc/os-release; CC --version; module list; } > environment.txt 2>&1
 cmake -S "$1" -B build -DCMAKE_C_COMPILER=cc -DCMAKE_CXX_COMPILER=CC
 cmake --build build
 cd build
